@@ -3,20 +3,38 @@ import HealthKit
 import PMKCoreLocation
 import PMKHealthKit
 import PromiseKit
+import Swizzle
 import WatchKit
 
 // MARK: - UIKit stubs
 
-fileprivate extension NSObject {
+// watchOS 5
+private extension NSObject {
   @objc class func sharedApplication() -> NSObject? { fatalError() }
   @objc func keyWindow() -> NSObject? { fatalError() }
   @objc func rootViewController() -> NSObject? { fatalError() }
-  @objc func viewControllers() -> Array<NSObject> { fatalError() }
+  @objc func viewControllers() -> [NSObject]? { fatalError() }
   @objc func view() -> NSObject? { fatalError() }
-  @objc func subviews() -> Array<NSObject>? { fatalError() }
+  @objc func subviews() -> [NSObject]? { fatalError() }
   @objc func timeLabel() -> NSObject? { fatalError() }
   @objc func layer() -> NSObject? { fatalError() }
   @objc func setOpacity(_ opacity: CDouble) { fatalError() }
+}
+
+// watchOS 6 or later
+private extension NSObject {
+  @objc class func sharedPUICApplication() -> NSObject? { fatalError() }
+  @objc func _setStatusBarTimeHidden(_ hidden: Bool, animated: Bool, completion: NSObject? = nil) { fatalError() }
+}
+
+// MARK: - CLKTimeFormatter
+
+private typealias CLKTimeFormatter = NSObject
+
+private extension CLKTimeFormatter {
+  @objc func swizzled_timeText() -> NSString {
+    return NSString(string: " ")
+  }
 }
 
 // MARK: - TimeLabel
@@ -25,7 +43,7 @@ func getSPFullScreenView() -> NSObject? {
   let UIApplication = NSClassFromString("UIApplication") as? NSObject.Type
 
   if let views = UIApplication?.sharedApplication()?.keyWindow()?
-    .rootViewController()?.viewControllers().first?.view()?.subviews() {
+    .rootViewController()?.viewControllers()?.first?.view()?.subviews() {
     for view in views {
       if type(of: view) == NSClassFromString("SPFullScreenView") {
         return view
@@ -36,8 +54,31 @@ func getSPFullScreenView() -> NSObject? {
   return nil
 }
 
-var hideDefaultTimeLabelOnce: () -> Void = {
+func hideDefaultTimeLabelWatchOS5() {
   getSPFullScreenView()?.timeLabel()?.layer()?.setOpacity(0)
+}
+
+func hideDefaultTimeLabelWatchOS6() {
+  try! swizzleInstanceMethodObjcString(
+    of: "CLKTimeFormatter",
+    from: "timeText",
+    to: #selector(CLKTimeFormatter.swizzled_timeText)
+  )
+}
+
+func hideDefaultTimeLabelWatchOS7() {
+  let application = NSClassFromString("PUICApplication") as? NSObject.Type
+  application?.sharedPUICApplication()?._setStatusBarTimeHidden(true, animated: false)
+}
+
+var hideTimeOnce: () -> Void = {
+  if #available(watchOS 7, *) {
+    hideDefaultTimeLabelWatchOS7()
+  } else if #available(watchOS 6, *) {
+    hideDefaultTimeLabelWatchOS6()
+  } else {
+    hideDefaultTimeLabelWatchOS5()
+  }
 
   return {}
 }()
@@ -257,6 +298,6 @@ class InterfaceController: WKInterfaceController {
   override func didAppear() {
     // Hack to make the digital time overlay disappear
     // from: https://github.com/steventroughtonsmith/SpriteKitWatchFace
-    hideDefaultTimeLabelOnce()
+    hideTimeOnce()
   }
 }
